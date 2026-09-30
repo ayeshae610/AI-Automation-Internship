@@ -1,0 +1,550 @@
+{
+  "name": "Ai Client Onboarding System",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "client-onboarding",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "7fc4b14d-d60d-4ac2-8b97-5756fdd345b1",
+      "name": "Webhook - Vapi Call Ends",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -704,
+        176
+      ],
+      "webhookId": "client-onboarding"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\n\n// Vapi sends the tool call nested like this:\n// body.message.toolCalls[0].function.arguments\n// and\n// body.message.toolCalls[0].id  (needed later to respond)\n\nconst toolCall = body?.message?.toolCalls?.[0];\nconst args = toolCall?.function?.arguments || {};\nconst toolCallId = toolCall?.id || '';\n\nreturn [{\n  json: {\n    toolCallId,\n    clientName: args.clientName || '',\n    companyName: args.companyName || '',\n    email: args.email || '',\n    serviceRequired: args.serviceRequired || '',\n    projectDescription: args.projectDescription || '',\n    budget: Number(String(args.budget || '').replace(/[^0-9.]/g, '')) || 0\n  }\n}];"
+      },
+      "id": "231a21a7-a0a3-4895-884c-34dbecda31e5",
+      "name": "Extract Vapi Arguments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        176
+      ],
+      "notes": "Pulls the 6 fields out of Vapi's nested toolCalls[0].function.arguments payload. Adjust the path if your Vapi payload shape differs."
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5.5",
+          "mode": "list",
+          "cachedResultName": "GPT-5.5"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You work as an automated triage assistant that reviews incoming project requests. Based on the details provided, respond with valid JSON only — no markdown formatting, no commentary, nothing outside the JSON object. The object must contain exactly these three fields:\n{\n  \"service_category\": \"a brief label for the type of work, for instance Web & Mobile Development, Branding, or AI Automation\",\n  \"summary\": \"a single sentence capturing what the client is asking for\",\n  \"next_action\": \"a short, concrete next step for the team, for instance Schedule technical consultation\"\n}\nLeave priority out entirely — it is determined through a separate process, not by you.",
+              "role": "system"
+            },
+            {
+              "content": "=Company: {{ $json.companyName }}\nService required: {{ $json.serviceRequired }}\nProject description: {{ $json.projectDescription }}\nBudget: {{ $json.budget }} PKR"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "faacc978-a0dd-4ba2-b3d5-2a9558c0bd28",
+      "name": "AI Classification",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.5,
+      "position": [
+        -336,
+        176
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": null,
+          "name": "",
+          "__aiGatewayManaged": true
+        }
+      },
+      "notes": "Swap for whichever AI node/provider you've been using (OpenAI, Anthropic, etc). Must output valid JSON only."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the AI's JSON response safely\nconst raw = $input.first().json.message?.content || $input.first().json.choices?.[0]?.message?.content || '{}';\n\nlet parsed;\ntry {\n  const cleaned = raw.replace(/```json|```/g, '').trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  parsed = { service_category: 'Uncategorized', summary: '', next_action: 'Manual review needed' };\n}\n\n// Pull the original fields back in from the previous node (Extract Vapi Arguments)\nconst original = $('Extract Vapi Arguments').first().json;\n\nreturn [{\n  json: {\n    ...original,\n    service_category: parsed.service_category,\n    summary: parsed.summary,\n    next_action: parsed.next_action\n  }\n}];"
+      },
+      "id": "a63e5492-3bdf-446a-83b7-8f0b59925d07",
+      "name": "Parse AI Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const budget = Number($json.budget) || 0;\nlet priority;\n\nif (budget >= 500000) {\n  priority = 'High';\n} else if (budget >= 200000) {\n  priority = 'Medium';\n} else {\n  priority = 'Low';\n}\n\nreturn [{\n  json: {\n    ...$json,\n    priority,\n    status: 'New',\n    createdAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "fce53fe9-1335-44fb-bb96-d2fe3ddb2a77",
+      "name": "Calculate Priority",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        176,
+        176
+      ],
+      "notes": "Deterministic priority - do NOT trust the AI to do this math. >=500000 HIGH, 200000-499999 MEDIUM, <200000 LOW."
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "applAbf5kEyGUFPkh",
+          "mode": "list",
+          "cachedResultName": "MATalogics AI Operations Base",
+          "cachedResultUrl": "https://airtable.com/applAbf5kEyGUFPkh"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tblJGyfshDmPtl7f9",
+          "mode": "list",
+          "cachedResultName": "Client Onboarding",
+          "cachedResultUrl": "https://airtable.com/applAbf5kEyGUFPkh/tblJGyfshDmPtl7f9"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Budget": "={{ $('Extract Vapi Arguments').item.json.budget }}",
+            "Client Name": "={{ $json.clientName }}",
+            "Company Name": "={{ $json.companyName }}",
+            "Email": "={{ $json.email }}",
+            "Service": "={{ $('Extract Vapi Arguments').item.json.serviceRequired }}",
+            "Description": "={{ $('Extract Vapi Arguments').item.json.projectDescription }}",
+            "Created At": "={{ $json.createdAt }}",
+            "Status": "={{ $json.status }}",
+            "Summary": "={{ $json.summary }}",
+            "Priority": "={{ $json.priority }}",
+            "Category": "={{ $json.service_category }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Client Name",
+              "displayName": "Client Name",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Company Name",
+              "displayName": "Company Name",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Service",
+              "displayName": "Service",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Description",
+              "displayName": "Description",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Budget",
+              "displayName": "Budget",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Category",
+              "displayName": "Category",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Priority",
+              "displayName": "Priority",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Low",
+                  "value": "Low"
+                },
+                {
+                  "name": "Medium",
+                  "value": "Medium"
+                },
+                {
+                  "name": "High",
+                  "value": "High"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "New",
+                  "value": "New"
+                },
+                {
+                  "name": "Inprogress",
+                  "value": "Inprogress"
+                },
+                {
+                  "name": "Done",
+                  "value": "Done"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Created At",
+              "displayName": "Created At",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "typecast": true
+        }
+      },
+      "id": "f6d4f524-1e9c-4f47-b2a9-cf3ae42b4c2b",
+      "name": "Airtable - Create Record",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        400,
+        48
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "3bbcbe9d-3c2e-80cd-9d4d-d288b2d1e87f",
+          "mode": "list",
+          "cachedResultName": "\n",
+          "cachedResultUrl": "https://app.notion.com/p/3bbcbe9d3c2e80cd9d4dd288b2d1e87f"
+        },
+        "title": "={{ $json.companyName }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Client|title",
+              "title": "={{ $json.clientName }}"
+            },
+            {
+              "key": "Service|rich_text",
+              "textContent": "={{ $json.service_category }}"
+            },
+            {
+              "key": "Budget|number",
+              "numberValue": "={{ $json.budget }}"
+            },
+            {
+              "key": "Priority|select",
+              "selectValue": "={{ $json.priority }}"
+            },
+            {
+              "key": "Summary|rich_text",
+              "textContent": "={{ $json.summary }}"
+            },
+            {
+              "key": "Next Action|rich_text",
+              "textContent": "={{ $json.next_action }}"
+            },
+            {
+              "key": "Status|status",
+              "statusValue": "={{ $json.status }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f1b9fb9c-bfba-488d-8a0a-3eea8aa403fb",
+      "name": "Notion - Create Page",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        384,
+        272
+      ],
+      "notes": "Adjust property keys/types to match exactly how your 'Client Projects' database columns are set up."
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('Calculate Priority').first().json;\n\nconst priority = data.priority;\nlet label;\n\nif (priority === 'High') {\n  label = 'HIGH PRIORITY CLIENT';\n} else if (priority === 'Medium') {\n  label = 'MEDIUM PRIORITY CLIENT';\n} else {\n  label = 'STANDARD CLIENT';\n}\n\nconst text = `*NEW CLIENT*\\n\\n*${label}*\\n\\n${data.clientName} - ${data.companyName}\\n\\nService: ${data.service_category}\\nBudget: PKR ${data.budget}\\nPriority: ${priority}\\n\\nAI Summary: ${data.summary}\\n\\nNext Action: ${data.next_action}\\n\\n_Airtable + Notion records created successfully._`;\n\nreturn [{ json: { ...data, slackText: text } }];"
+      },
+      "id": "d161d430-0b05-4bd4-ac43-1484ae01e97d",
+      "name": "Build Slack Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "#new-clients",
+          "mode": "name"
+        },
+        "text": "={{ $json.slackText }}",
+        "otherOptions": {}
+      },
+      "id": "db732c38-414c-4ece-81fa-017c13271463",
+      "name": "Slack - Team Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        848,
+        176
+      ],
+      "webhookId": "ee5e2dec-de98-4b7c-8995-c3e8d6d71300"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    results: [\n      {\n        toolCallId: $('Extract Vapi Arguments').first().json.toolCallId,\n        result: 'Client onboarding submitted successfully.'\n      }\n    ]\n  }\n}];"
+      },
+      "id": "6d5a0df1-8772-4bfc-a6ff-a750a78c541d",
+      "name": "Format Vapi Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1072,
+        176
+      ],
+      "notes": "This exact {results:[{toolCallId, result}]} shape is required or Vapi will report a tool error even if everything above succeeded."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "9a6bdc0e-fede-4d45-84ab-4d2de3265d7d",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        176
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook - Vapi Call Ends": {
+      "main": [
+        [
+          {
+            "node": "Extract Vapi Arguments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Vapi Arguments": {
+      "main": [
+        [
+          {
+            "node": "AI Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Classification": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Output": {
+      "main": [
+        [
+          {
+            "node": "Calculate Priority",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Priority": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Create Record",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notion - Create Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable - Create Record": {
+      "main": [
+        [
+          {
+            "node": "Build Slack Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion - Create Page": {
+      "main": [
+        [
+          {
+            "node": "Build Slack Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Slack Message": {
+      "main": [
+        [
+          {
+            "node": "Slack - Team Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack - Team Alert": {
+      "main": [
+        [
+          {
+            "node": "Format Vapi Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Vapi Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "f5087f0a-440e-4f77-b61f-2c892bd6bed4",
+  "meta": {
+    "instanceId": "7212930d569b58f6289f9bb472fd188b117a7a0096e5cbe01a67773cf21e93a1"
+  },
+  "nodeGroups": [],
+  "id": "3Eb7y6I5CROt3GCR",
+  "tags": []
+}
